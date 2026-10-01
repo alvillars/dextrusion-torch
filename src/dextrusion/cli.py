@@ -19,7 +19,7 @@ def _add_detect(sub):
     p.add_argument("-o", "--outdir", type=Path, help="default: <movie folder>/results")
     p.add_argument("--cell-diameter", type=float, default=25)
     p.add_argument("--extrusion-duration", type=float, default=4.5)
-    p.add_argument("--dxy", type=int, default=25, help="spatial step of the sliding window")
+    p.add_argument("--dxy", type=int, default=10, help="spatial step of the sliding window")
     p.add_argument("--dz", type=int, default=2, help="temporal step of the sliding window")
     p.add_argument("--group-size", type=int, default=4096, help="windows kept in memory at once")
     p.add_argument("--batch-size", type=int, default=512, help="windows per forward pass")

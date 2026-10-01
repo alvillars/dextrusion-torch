@@ -23,7 +23,7 @@ log = logging.getLogger("dextrusion")
 class DetectOptions:
     cell_diameter: float = 25
     extrusion_duration: float = 4.5
-    dxy: int = 25  # spatial step of the sliding window
+    dxy: int = 10  # spatial step of the sliding window
     dz: int = 2  # temporal step of the sliding window
     group_size: int = 4096
     batch_size: int = 512
