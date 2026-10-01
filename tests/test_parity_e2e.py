@@ -54,3 +54,20 @@ def test_postprocessing_matches_original(tag, vol, proba):
 def test_cleaned_probamap_matches_original():
     got = cleaned_probamap(REF["post_probamap"][0], 150, 120, 10, 4)
     np.testing.assert_array_equal(got, REF["post_clean_1"])
+
+
+# ---- event-level scoring: original RoiUtils vs evaluate.py -----------------------------
+@pytest.mark.parametrize("i", range(14))
+@pytest.mark.parametrize("dxy,dt", [(15, 4), (10, 3)])
+def test_event_scoring_matches_original(i, dxy, dt):
+    from dextrusion.evaluate import compare, false_negatives, false_positives
+
+    det = [tuple(r) for r in REF[f"score_{i}_det"].tolist()]
+    gt = [tuple(r) for r in REF[f"score_{i}_gt"].tolist()]
+    tp, fp, fn, precision, recall = REF[f"score_{i}_{dxy}_{dt}"]
+    s = compare(det, gt, dxy, dt)
+    assert (s.tp, s.fp, s.fn) == (tp, fp, fn)
+    assert s.precision == pytest.approx(precision, abs=1e-12)
+    assert s.recall == pytest.approx(recall, abs=1e-12)
+    assert false_positives(det, gt, dxy, dt) == [tuple(r) for r in REF[f"score_{i}_{dxy}_{dt}_fp"].tolist()]
+    assert false_negatives(det, gt, dxy, dt) == [tuple(r) for r in REF[f"score_{i}_{dxy}_{dt}_fn"].tolist()]

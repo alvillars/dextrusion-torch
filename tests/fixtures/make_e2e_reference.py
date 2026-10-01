@@ -88,6 +88,43 @@ def main(repo: str, nets: str, out: str) -> None:
                 result[f"post_{tag}rois_{cat}"] = np.array(rois, dtype=int).reshape(-1, 3)
         result["post_clean_1"] = dex.clean_probamap(None, cat=1, threshold=125, mindxy=10, mindt=4,
                                                     volume_threshold=150, proba_threshold=120)
+    # event-level scoring: original RoiUtils on seeded random detection / ground-truth sets
+    import dextrusion.RoiUtils as ru
+
+    rng = np.random.default_rng(11)
+    with tempfile.TemporaryDirectory() as tmp:
+        for i in range(14):
+            n_gt = [0, 1, 5, 12, 30][i % 5]
+            n_det = [0, 3, 9, 20][i % 4]
+            gt = np.stack([rng.integers(0, 40, n_gt), rng.integers(0, 120, n_gt),
+                           rng.integers(0, 120, n_gt)], axis=1) if n_gt else np.zeros((0, 3), int)
+            # detections: jittered copies of some GT events (incl. duplicates), plus random ones
+            near = (gt[rng.integers(0, max(n_gt, 1), n_det)] + rng.integers(-6, 7, (n_det, 3))
+                    if n_gt else np.zeros((0, 3), int))
+            far = np.stack([rng.integers(0, 40, n_det), rng.integers(0, 120, n_det),
+                            rng.integers(0, 120, n_det)], axis=1)
+            keep = rng.random(n_det) < 0.7
+            det = np.where(keep[:, None], near if n_gt else far, far)
+            det = np.clip(det, 0, None).astype(int).reshape(-1, 3)
+            gt = gt.astype(int).reshape(-1, 3)
+            result[f"score_{i}_det"], result[f"score_{i}_gt"] = det, gt
+            dfile, gfile = os.path.join(tmp, f"d{i}.zip"), os.path.join(tmp, f"g{i}.zip")
+            ru.write_rois(dfile, [ru.create_roi(tuple(map(int, r))) for r in det], verbose=False)
+            ru.write_rois(gfile, [ru.create_roi(tuple(map(int, r))) for r in gt], verbose=False)
+            for dxy, dt in [(15, 4), (10, 3)]:
+                d, g = ru.read_rois(dfile) if n_det else [], ru.read_rois(gfile) if n_gt else []
+                res = ru.compare_rois(dfile, gfile, distance_xy=dxy, distance_t=dt) if (
+                    n_det and n_gt) else None
+                if res is None:  # the original cannot read empty ROI files: use its core functions
+                    tp, fp = ru.check_positives(d, g, dxy, dt)
+                    fn = ru.check_falseneg(g, d, dxy, dt)
+                    res = [tp, fp, fn, tp / (tp + fp) if tp + fp else 0,
+                           tp / (tp + fn) if tp + fp and tp + fn else 0]
+                result[f"score_{i}_{dxy}_{dt}"] = np.array(res, dtype=float)
+                fpl = [(r.position - 1, r.top, r.left) for r in ru.get_falsepositives(d, g, dxy, dt)]
+                fnl = [(r.position - 1, r.top, r.left) for r in ru.get_falsenegatives(d, g, dxy, dt)]
+                result[f"score_{i}_{dxy}_{dt}_fp"] = np.array(fpl, dtype=int).reshape(-1, 3)
+                result[f"score_{i}_{dxy}_{dt}_fn"] = np.array(fnl, dtype=int).reshape(-1, 3)
     np.savez_compressed(out, **result)
     print({k: v.shape for k, v in result.items()})
 
