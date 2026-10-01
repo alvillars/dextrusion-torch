@@ -14,6 +14,7 @@ maps. Behaviours kept on purpose (all are visible in the results of already publ
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from math import ceil, floor
 from pathlib import Path
@@ -144,6 +145,8 @@ def detect(
     for m in models if isinstance(models, (list, tuple)) else [models]:
         paths.extend(resolve_models(m))
     loaded = [load_model(p, device) for p in paths]
+    dev = torch.device(device)
+    log.info("Device: %s", torch.cuda.get_device_name(dev) if dev.type == "cuda" else "cpu")
     cfg0 = loaded[0][1]
     for _, c in loaded[1:]:
         if (c.ncat, c.nframes, c.half_size) != (cfg0.ncat, cfg0.nframes, cfg0.half_size):
@@ -178,8 +181,12 @@ def detect(
             raise ValueError(f"movie {init_shape} is too small for the window size of the model")
         log.info("Model %d/%d, shift (t=%d, xy=%d): %d windows", cmod + 1, nmod, shiftz, shiftxy,
                  tiling.n_windows)
-        for start in range(0, tiling.n_windows, group_size):
+        t_model = time.time()
+        for g, start in enumerate(range(0, tiling.n_windows, group_size)):
             stop = min(start + group_size, tiling.n_windows)
+            if g % 25 == 0 and g > 0:  # progress line roughly every 100k windows
+                log.info("  model %d/%d: %d/%d windows (%.0f %%), %.0f s elapsed", cmod + 1, nmod,
+                         start, tiling.n_windows, 100 * start / tiling.n_windows, time.time() - t_model)
             wins = extract_windows(img, tiling, start, stop)
             probs = _predict(model, wins, device, batch_size)
             cs = tiling.centres(start, stop)
