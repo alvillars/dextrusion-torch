@@ -1,0 +1,24 @@
+{
+  "ncat": 4,
+  "catnames": [
+    "",
+    "_cell_death.zip",
+    "_cell_sop.zip",
+    "_cell_division.zip"
+  ],
+  "half_size": [
+    22,
+    22
+  ],
+  "nframes": [
+    5,
+    5
+  ],
+  "cell_diameter": 25.0,
+  "extrusion_duration": 4.5,
+  "nb_filters": 16,
+  "batch_size": 50,
+  "nb_epochs": 40,
+  "augmentation": 3,
+  "add_nothing_windows": 15
+}
