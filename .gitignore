@@ -8,3 +8,4 @@ build/
 *.egg-info/
 results/
 tmp_data_from_roi_*/
+data/
