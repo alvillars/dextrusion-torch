@@ -26,6 +26,8 @@ dependencies = [
 # Only needed to read legacy Keras SavedModels inside this environment.
 # `dextrusion convert` works without it (it uses an isolated `uv run` env).
 convert = ["tensorflow-cpu>=2.12"]
+# Only needed for `dextrusion label` (napari annotation tool).
+label = ["napari[all]>=0.5"]
 
 [project.scripts]
 dextrusion = "dextrusion.cli:main"
