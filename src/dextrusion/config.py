@@ -95,3 +95,18 @@ class DeXConfig:
                     cfg.add_nothing_windows = int(value)
                 # datatraining_path is deliberately dropped (machine specific)
         return cfg
+
+
+def extend_catnames(old: list[str], new: list[str]) -> list[str]:
+    """Class names of a fine-tuned network that adds classes to an existing one.
+
+    The existing classes must keep their position and name (their output rows are reused); new
+    classes can only be appended.
+    """
+    if list(new[: len(old)]) != list(old):
+        raise ValueError(
+            f"--catnames must start with the classes of the network being fine-tuned {list(old)} "
+            f"(same order) and may only append new classes; got {list(new)}")
+    if len(set(new)) != len(new):
+        raise ValueError(f"duplicate class names in {list(new)}")
+    return list(new)

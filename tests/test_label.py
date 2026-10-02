@@ -60,10 +60,6 @@ def test_train_catnames_option_is_validated():
     a = parser.parse_args(["train", "x", "-o", "y", "--catnames", "", "_cell_delamination.zip",
                            "_cell_division.zip"])
     assert a.catnames == ["", "_cell_delamination.zip", "_cell_division.zip"]
-    a = parser.parse_args(["train", "x", "-o", "y", "--init-from", "net", "--catnames", "",
-                           "_a.zip"])
-    with pytest.raises(SystemExit, match="init-from"):
-        _cmd_train(a)
     for bad in (["_a.zip", "_b.zip"], [""], ["", "_a.txt"]):
         a = parser.parse_args(["train", "x", "-o", "y", "--catnames", *bad])
         with pytest.raises(SystemExit):

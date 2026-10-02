@@ -14,7 +14,7 @@ from monai.data import DataLoader
 from monai.utils import set_determinism
 from torch import nn
 
-from .config import DeXConfig
+from .config import DeXConfig, extend_catnames
 from .data.dataset import build_datasets, collate_windows
 from .io import load_model, save_model
 from .model import DeXNet
@@ -36,6 +36,7 @@ class TrainOptions:
     seed: int = 0
     num_workers: int = 0
     device: str | None = None
+    freeze_cnn: bool = False  # fine-tuning: keep the per-frame CNN fixed, train GRU + head only
 
 
 def _run_epoch(model, loader, device, loss_fn, optimizer=None):
@@ -58,10 +59,13 @@ def _run_epoch(model, loader, device, loss_fn, optimizer=None):
 
 
 def train(data_path: str | Path, out_dir: str | Path, config: DeXConfig, opts: TrainOptions,
-          init_from: str | Path | None = None) -> Path:
+          init_from: str | Path | None = None, new_catnames: list[str] | None = None) -> Path:
     """Train on a folder of movies + ROI zips and save the model (safetensors + config.json).
 
     :param init_from: an existing DeXNet (native or legacy Keras) to fine-tune ("retrain")
+    :param new_catnames: with ``init_from``, the class names of the fine-tuned network: the classes
+        of the starting network, in the same order, followed by the new classes. The output layer
+        is widened (existing rows kept, new rows initialised).
     """
     device = torch.device(opts.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     set_determinism(seed=opts.seed)
@@ -69,13 +73,25 @@ def train(data_path: str | Path, out_dir: str | Path, config: DeXConfig, opts: T
 
     if init_from is not None:
         model, base_cfg = load_model(init_from, device)
-        # window geometry / classes must follow the model being retrained
-        config = replace(config, ncat=base_cfg.ncat, catnames=base_cfg.catnames,
+        names = list(base_cfg.catnames)
+        if new_catnames is not None:
+            names = extend_catnames(base_cfg.catnames, new_catnames)
+            if len(names) > base_cfg.ncat:
+                log.info("Adding classes %s to %s (output layer widened %d -> %d)",
+                         names[base_cfg.ncat:], init_from, base_cfg.ncat, len(names))
+                model = model.with_extra_classes(len(names))
+        # window geometry must follow the model being retrained; classes only grow
+        config = replace(config, ncat=len(names), catnames=names,
                          half_size=base_cfg.half_size, nframes=base_cfg.nframes,
                          nb_filters=base_cfg.nb_filters, cell_diameter=base_cfg.cell_diameter,
                          extrusion_duration=base_cfg.extrusion_duration)
     else:
+        if new_catnames is not None:
+            raise ValueError("new_catnames only applies when fine-tuning (init_from)")
         model = DeXNet(config.ncat, config.nb_filters).to(device)
+    if opts.freeze_cnn:
+        model.freeze_cnn()
+        log.info("CNN frozen: training the GRU and the decision head only")
     batch_size = opts.batch_size or config.batch_size
     config.nb_epochs, config.augmentation = opts.epochs, opts.naug
     config.add_nothing_windows, config.batch_size = opts.add_nothing_windows, batch_size
@@ -93,7 +109,7 @@ def train(data_path: str | Path, out_dir: str | Path, config: DeXConfig, opts: T
     val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
                         num_workers=opts.num_workers, collate_fn=collate) if len(val_ds) else None
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=opts.lr)
+    optimizer = torch.optim.SGD([p for p in model.parameters() if p.requires_grad], lr=opts.lr)
     # Keras ReduceLROnPlateau(patience=10) reduces on the 10th stagnating epoch; torch's counter
     # needs patience=9 for the same behaviour. min_delta is absolute in Keras.
     scheduler = (torch.optim.lr_scheduler.ReduceLROnPlateau(

@@ -48,7 +48,11 @@ def _add_train(sub):
     p.add_argument("--catnames", nargs="+", metavar="SUFFIX",
                    help="ROI file suffix of every class, first one empty for 'no event', e.g. "
                         "--catnames '' _cell_delamination.zip _cell_division.zip (sets ncat; "
-                        "default: '' _cell_death.zip _cell_sop.zip _cell_division.zip)")
+                        "default: '' _cell_death.zip _cell_sop.zip _cell_division.zip). With "
+                        "--init-from, the classes of the starting network in the same order, then "
+                        "the new classes (the output layer is widened)")
+    p.add_argument("--freeze-cnn", action="store_true",
+                   help="fine-tuning: keep the per-frame CNN fixed, train the GRU and head only")
     p.add_argument("--half-size", type=int, nargs=2, default=(22, 22))
     p.add_argument("--nframes", type=int, nargs=2, default=(5, 5))
     p.add_argument("--cell-diameter", type=float, default=25)
@@ -135,10 +139,6 @@ def _cmd_train(a) -> int:
     from .train import TrainOptions, train
 
     extra = {}
-    if a.catnames and a.init_from:
-        raise SystemExit("--catnames cannot be combined with --init-from: a retrained network keeps "
-                         "the classes of the network it starts from. Train from scratch to use "
-                         "new classes.")
     if a.catnames:
         if a.catnames[0] != "" or len(a.catnames) < 2 or not all(c.endswith(".zip") for c in a.catnames[1:]):
             raise SystemExit("--catnames: the first name must be the empty string (no event) and "
@@ -152,8 +152,12 @@ def _cmd_train(a) -> int:
         epochs=a.epochs, lr=a.lr, val_ratio=a.val_ratio, naug=a.naug,
         add_nothing_windows=a.add_nothing, augment_noise=not a.no_noise,
         plateau=not a.no_plateau, legacy_batch_normalization=a.legacy_batch_normalization,
-        seed=a.seed, num_workers=a.workers, device=a.device)
-    train(a.data, a.out, config, opts, init_from=a.init_from)
+        seed=a.seed, num_workers=a.workers, device=a.device, freeze_cnn=a.freeze_cnn)
+    try:
+        train(a.data, a.out, config, opts, init_from=a.init_from,
+              new_catnames=extra.get("catnames") if a.init_from else None)
+    except ValueError as e:
+        raise SystemExit(f"error: {e}") from e
     return 0
 
 

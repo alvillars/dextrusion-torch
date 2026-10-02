@@ -79,8 +79,22 @@ workers changes the result.
 
 Custom event classes are given with ``--catnames``: the ROI file suffix of every class, the first
 one empty for "no event", for example ``--catnames "" _cell_delamination.zip _cell_division.zip``
-(this sets the number of classes). It cannot be combined with ``--init-from``: a retrained network
-keeps the classes of the network it starts from.
+(this sets the number of classes).
+
+Fine-tuning with a new class: combine ``--init-from`` with ``--catnames`` listing the classes of
+the starting network in the same order, followed by the new ones. The output layer is widened:
+the existing classes keep their output weights and the new class starts from a fresh row, so the
+probabilities shift slightly before training. ``--freeze-cnn`` keeps the per-frame CNN fixed and
+trains only the GRU and the decision head, which suits small datasets, and a smaller ``--lr``
+(for example 0.01) than the 0.1 used from scratch is advisable:
+
+.. code-block:: bash
+
+    uv run dextrusion train data/ -o my_net_v2 --init-from models/notum_all/notumAll0 \
+        --catnames "" _cell_death.zip _cell_sop.zip _cell_division.zip _cell_delamination.zip \
+        --freeze-cnn --lr 0.01 --epochs 10 --naug 3
+
+Without ``--catnames`` a retrained network keeps exactly the classes of the network it starts from.
 
 Label new training data
 -----------------------

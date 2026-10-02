@@ -49,6 +49,45 @@ class DeXNet(nn.Module):
         nn.init.zeros_(self.gru.bias_ih_l0)
         nn.init.zeros_(self.gru.bias_hh_l0)
 
+    # ------------------------------------------------------------------ fine-tuning helpers
+    cnn_frozen = False
+
+    def _stages(self):
+        return [self.stage1, self.stage2, self.stage3, self.stage4]
+
+    def freeze_cnn(self) -> None:
+        """Freeze the per-frame CNN (weights and BatchNorm statistics); GRU and head stay trainable."""
+        for stage in self._stages():
+            for p in stage.parameters():
+                p.requires_grad_(False)
+        self.cnn_frozen = True
+        self.train(self.training)
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.cnn_frozen:  # keep BatchNorm running statistics fixed while the CNN is frozen
+            for stage in self._stages():
+                stage.eval()
+        return self
+
+    def with_extra_classes(self, ncat: int) -> DeXNet:
+        """Copy of the network with ``ncat`` outputs (``ncat >= self.ncat``).
+
+        Everything is copied; the existing classes keep their output rows (same logits) and the
+        added classes get a freshly initialised row. Probabilities change slightly because the
+        softmax now has more classes, until the network is fine-tuned.
+        """
+        if ncat < self.ncat:
+            raise ValueError(f"cannot reduce the number of classes from {self.ncat} to {ncat}")
+        new = DeXNet(ncat, self.nb_filters).to(self.out.weight.device)
+        state = {k: v for k, v in self.state_dict().items() if not k.startswith("out.")}
+        missing, unexpected = new.load_state_dict(state, strict=False)
+        assert not unexpected and set(missing) == {"out.weight", "out.bias"}, (missing, unexpected)
+        with torch.no_grad():
+            new.out.weight[: self.ncat] = self.out.weight
+            new.out.bias[: self.ncat] = self.out.bias
+        return new
+
     def features(self, x: torch.Tensor) -> torch.Tensor:
         """Per-frame latent vectors ``(B, T, 8*nb_filters)``."""
         b, t = x.shape[:2]
