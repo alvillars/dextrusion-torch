@@ -96,6 +96,13 @@ trains only the GRU and the decision head, which suits small datasets, and a sma
 
 Without ``--catnames`` a retrained network keeps exactly the classes of the network it starts from.
 
+A small annotated movie gets few windows next to a large dataset (the sampler balances classes
+within each movie, not across movies). ``--oversample MOVIE=K`` samples a movie K times, with
+independent position jitter, augmentation and random "nothing" windows; only training windows are
+repeated, validation windows are not, and every annotated event stays on one side of the
+train/validation split. K copies of the same few events can make the network memorise them, so
+watch the validation loss and prefer a moderate K together with ``--freeze-cnn``.
+
 Label new training data
 -----------------------
 

@@ -89,8 +89,14 @@ def to_uint8(window: np.ndarray) -> np.ndarray:
 
 
 def _sample_movie(imgname: Path, idx: int, shape, config, naug, add_nothing, val_ratio, rng,
-                  balance=True):
-    """All (train, val) samples of one movie."""
+                  balance=True, split_seed=0):
+    """All (train, val) samples of one movie.
+
+    ``rng`` drives the jitter and the random "nothing" windows. Which annotated events go to
+    validation is drawn from a separate generator seeded by ``(split_seed, idx)``, so sampling the
+    same movie again with another ``rng`` (oversampling) keeps every event on the same side.
+    """
+    split_rng = np.random.default_rng([split_seed, idx])
     train: list[Sample] = []
     val: list[Sample] = []
     base = imgname.with_suffix("")
@@ -114,7 +120,7 @@ def _sample_movie(imgname: Path, idx: int, shape, config, naug, add_nothing, val
     for cat, rois in rois_by_cat.items():
         if counts[cat] < 0.75 * nmax and balance:
             counts[cat] = 0.85 * nmax
-        in_val = rng.random(len(rois)) < val_ratio  # split decided per source ROI
+        in_val = split_rng.random(len(rois)) < val_ratio  # split decided per source ROI
         done = 0
         for i, roi in enumerate(rois):
             z, y, x = jitter(roi, config, rng)
@@ -146,7 +152,7 @@ def _sample_movie(imgname: Path, idx: int, shape, config, naug, add_nothing, val
     nothing = Path(str(base) + "_nothing.zip")
     if add_nothing > 1 and nothing.is_file():
         rois = read_rois(nothing)
-        in_val = rng.random(len(rois)) < val_ratio
+        in_val = split_rng.random(len(rois)) < val_ratio
         for i, roi in enumerate(rois):
             z, y, x = jitter(roi, config, rng)
             if window_fits(shape, config, z, y, x):
@@ -217,18 +223,38 @@ def load_movies(data_path: str | Path) -> tuple[list[Path], list[np.ndarray]]:
 
 
 def build_datasets(data_path, config: DeXConfig, val_ratio: float = 0.2, naug: int = 1,
-                   add_nothing_windows: int = 10, augment_noise: bool = True, seed: int = 0):
-    """Return ``(train_dataset, val_dataset)`` for a training folder. Deterministic given ``seed``."""
+                   add_nothing_windows: int = 10, augment_noise: bool = True, seed: int = 0,
+                   oversample: dict[str, int] | None = None):
+    """Return ``(train_dataset, val_dataset)`` for a training folder. Deterministic given ``seed``.
+
+    :param oversample: ``{movie name (without .tif): k}``. Those movies are sampled ``k`` times
+        with independent jitter and random windows, so that a small annotated movie gets a fair
+        share next to big datasets. Only the training windows are repeated; the validation
+        windows come from the first pass and every annotated event stays on one side.
+    """
     paths, movies = load_movies(data_path)
+    oversample = dict(oversample or {})
+    stems = [p.stem for p in paths]
+    for name, k in oversample.items():
+        if name not in stems:
+            raise ValueError(f"--oversample: no movie named '{name}' in {data_path} "
+                             f"(movies: {', '.join(stems)})")
+        if int(k) != k or k < 1:
+            raise ValueError(f"--oversample {name}={k}: the factor must be an integer >= 1")
     rng = np.random.default_rng(seed)
     train: list[Sample] = []
     val: list[Sample] = []
     for i, (p, m) in enumerate(zip(paths, movies)):
         if m.ndim != 3:
             raise ValueError(f"{p}: expected a (T, Y, X) movie, got shape {m.shape}")
-        t, v = _sample_movie(p, i, m.shape, config, naug, add_nothing_windows, val_ratio, rng)
-        log.info("%s: %d train / %d validation windows", p.name, len(t), len(v))
-        train += t
-        val += v
+        k = int(oversample.get(p.stem, 1))
+        for rep in range(k):
+            t, v = _sample_movie(p, i, m.shape, config, naug, add_nothing_windows, val_ratio, rng,
+                                 split_seed=seed)
+            train += t
+            if rep == 0:
+                val += v
+                log.info("%s: %d train / %d validation windows%s", p.name, len(t), len(v),
+                         f" (x{k} oversampled)" if k > 1 else "")
     tr = train_transforms(augment_noise and naug > 1)
     return (WindowDataset(movies, train, config, tr), WindowDataset(movies, val, config, None))

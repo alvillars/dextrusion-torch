@@ -37,6 +37,7 @@ class TrainOptions:
     num_workers: int = 0
     device: str | None = None
     freeze_cnn: bool = False  # fine-tuning: keep the per-frame CNN fixed, train GRU + head only
+    oversample: dict[str, int] | None = None  # {movie name: k}: sample these movies k times
 
 
 def _run_epoch(model, loader, device, loss_fn, optimizer=None):
@@ -98,7 +99,7 @@ def train(data_path: str | Path, out_dir: str | Path, config: DeXConfig, opts: T
 
     train_ds, val_ds = build_datasets(
         data_path, config, opts.val_ratio, opts.naug, opts.add_nothing_windows,
-        opts.augment_noise, opts.seed)
+        opts.augment_noise, opts.seed, opts.oversample)
     log.info("%d training / %d validation windows", len(train_ds), len(val_ds))
     if len(train_ds) < batch_size:
         raise ValueError("fewer training windows than one batch: add data or lower the batch size")
