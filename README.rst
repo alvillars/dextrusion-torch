@@ -64,7 +64,7 @@ Train / retrain
 
 Training data is a folder with ``name.tif`` movies and ROI zips named ``name_cell_death.zip``,
 ``name_cell_sop.zip``, ``name_cell_division.zip`` (and optionally ``name_nothing.zip`` with typical
-false positives). The data used for the published networks is on Zenodo
+false positives; it is only used with ``--add-nothing`` above 1, a warning is logged otherwise). The data used for the published networks is on Zenodo
 (https://doi.org/10.5281/zenodo.7586394).
 
 .. code-block:: bash

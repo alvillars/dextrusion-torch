@@ -241,6 +241,12 @@ def build_datasets(data_path, config: DeXConfig, val_ratio: float = 0.2, naug: i
                              f"(movies: {', '.join(stems)})")
         if int(k) != k or k < 1:
             raise ValueError(f"--oversample {name}={k}: the factor must be an integer >= 1")
+    if add_nothing_windows <= 1:
+        for p in paths:
+            if Path(str(p.with_suffix("")) + "_nothing.zip").is_file():
+                log.warning("%s_nothing.zip is ignored because add_nothing_windows=%d "
+                            "(use a value > 1 to train on these hand-picked non-events)",
+                            p.stem, add_nothing_windows)
     rng = np.random.default_rng(seed)
     train: list[Sample] = []
     val: list[Sample] = []
