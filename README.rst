@@ -72,7 +72,45 @@ false positives). The data used for the published networks is on Zenodo
     uv run dextrusion train data/ -o my_net --nb-filters 16 --epochs 40 --naug 3 --add-nothing 15
     uv run dextrusion train new_data/ -o my_net_v2 --init-from my_net --epochs 10   # retrain
 
-Training is seeded (``--seed``); epoch metrics go to ``my_net/history.csv``.
+Training is seeded (``--seed``); epoch metrics go to ``my_net/history.csv``. Results are
+reproducible for a given seed, device and number of data-loader workers (``--workers``); the
+random streams of the workers differ from those of the main process, so changing the number of
+workers changes the result.
+
+Custom event classes are given with ``--catnames``: the ROI file suffix of every class, the first
+one empty for "no event", for example ``--catnames "" _cell_delamination.zip _cell_division.zip``
+(this sets the number of classes). It cannot be combined with ``--init-from``: a retrained network
+keeps the classes of the network it starts from.
+
+Label new training data
+-----------------------
+
+A napari tool writes the ROI files that ``train`` reads. It needs the optional ``label`` extra:
+
+.. code-block:: bash
+
+    uv sync --extra label
+    uv run dextrusion label movie.tif -o annotations/
+    uv run dextrusion label movie.tif -o annotations/ --classes division=_cell_division.zip \
+        delamination=_cell_delamination.zip       # these two are the default classes
+
+The movie is shown with one points layer per class. Press ``q`` (first class) or ``w`` (second
+class) to switch to that class in add mode, then click to add an event at the current frame; select
+points and press Backspace to delete them. ``k`` saves, and by default every change is saved
+automatically to ``annotations/<movie name><suffix>`` (ImageJ point ROIs). The previous version of a
+file is kept as ``<name>.bak.zip``, existing files are loaded when the tool starts, and the movie is
+symlinked into the folder, which is then directly a training folder. Further classes use the keys
+``g``, ``h`` and ``j`` (at most five classes).
+
+Mark every event at the frame and cell position where it is most recognisable, always on the same
+landmark of the event: a training window spans 5 frames before to 4 frames after the marked frame,
+and the sampler moves the position by up to 2 frames. For delaminations seen from the basal side
+(an emerging cell instead of a shrinking one) use a class of their own, since the shipped networks
+only know the apical appearance.
+
+The tool saves coordinates of the movie you annotate and does not rescale. The networks work with
+cells of about 25 px, so for a movie with much larger cells, train on a downscaled copy of the movie
+and of the ROIs.
 
 Evaluate
 --------

@@ -45,6 +45,10 @@ def _add_train(sub):
     p.add_argument("--nb-filters", type=int, default=8)
     p.add_argument("--batch-size", type=int, default=30)
     p.add_argument("--ncat", type=int, default=4)
+    p.add_argument("--catnames", nargs="+", metavar="SUFFIX",
+                   help="ROI file suffix of every class, first one empty for 'no event', e.g. "
+                        "--catnames '' _cell_delamination.zip _cell_division.zip (sets ncat; "
+                        "default: '' _cell_death.zip _cell_sop.zip _cell_division.zip)")
     p.add_argument("--half-size", type=int, nargs=2, default=(22, 22))
     p.add_argument("--nframes", type=int, nargs=2, default=(5, 5))
     p.add_argument("--cell-diameter", type=float, default=25)
@@ -87,6 +91,18 @@ def _add_convert(sub):
                    help="output folder (single source only; default: <source>/torch or <zip>.torch)")
 
 
+def _add_label(sub):
+    p = sub.add_parser("label", help="annotate events in napari and save training ROI files "
+                                     "(needs the `label` extra)")
+    p.add_argument("movie", type=Path, help="tif movie shaped (T, Y, X)")
+    p.add_argument("-o", "--out", required=True, type=Path,
+                   help="folder for the ROI files (the movie is symlinked into it)")
+    p.add_argument("--classes", nargs="+", metavar="NAME=SUFFIX",
+                   help="classes to annotate (default: division=_cell_division.zip "
+                        "delamination=_cell_delamination.zip)")
+    p.add_argument("--point-size", type=float, default=25, help="displayed size of the points")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dextrusion", description=__doc__)
     p.add_argument("-q", "--quiet", action="store_true")
@@ -95,6 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_train(sub)
     _add_evaluate(sub)
     _add_convert(sub)
+    _add_label(sub)
     return p
 
 
@@ -117,9 +134,20 @@ def _cmd_detect(a) -> int:
 def _cmd_train(a) -> int:
     from .train import TrainOptions, train
 
-    config = DeXConfig(ncat=a.ncat, half_size=tuple(a.half_size), nframes=tuple(a.nframes),
-                       cell_diameter=a.cell_diameter, extrusion_duration=a.extrusion_duration,
-                       nb_filters=a.nb_filters, batch_size=a.batch_size)
+    extra = {}
+    if a.catnames and a.init_from:
+        raise SystemExit("--catnames cannot be combined with --init-from: a retrained network keeps "
+                         "the classes of the network it starts from. Train from scratch to use "
+                         "new classes.")
+    if a.catnames:
+        if a.catnames[0] != "" or len(a.catnames) < 2 or not all(c.endswith(".zip") for c in a.catnames[1:]):
+            raise SystemExit("--catnames: the first name must be the empty string (no event) and "
+                             "the others ROI file suffixes ending in .zip")
+        extra = {"catnames": list(a.catnames), "ncat": len(a.catnames)}
+    config = DeXConfig(**{"ncat": a.ncat, **extra}, half_size=tuple(a.half_size),
+                       nframes=tuple(a.nframes), cell_diameter=a.cell_diameter,
+                       extrusion_duration=a.extrusion_duration, nb_filters=a.nb_filters,
+                       batch_size=a.batch_size)
     opts = TrainOptions(
         epochs=a.epochs, lr=a.lr, val_ratio=a.val_ratio, naug=a.naug,
         add_nothing_windows=a.add_nothing, augment_noise=not a.no_noise,
@@ -160,12 +188,32 @@ def _cmd_convert(a) -> int:
     return 0
 
 
+def parse_classes(items: list[str] | None) -> dict[str, str] | None:
+    """``NAME=SUFFIX`` pairs -> dict (None keeps the defaults of the labeling tool)."""
+    if not items:
+        return None
+    out = {}
+    for item in items:
+        name, sep, suffix = item.partition("=")
+        if not sep or not name or not suffix.endswith(".zip"):
+            raise SystemExit(f"--classes: '{item}' is not NAME=SUFFIX with a suffix ending in .zip")
+        out[name] = suffix
+    return out
+
+
+def _cmd_label(a) -> int:
+    from .label import launch
+
+    launch(a.movie, a.out, parse_classes(a.classes), a.point_size)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.WARNING if args.quiet else logging.INFO,
                         format="%(message)s", stream=sys.stderr)
     return {"detect": _cmd_detect, "train": _cmd_train, "evaluate": _cmd_evaluate,
-            "convert": _cmd_convert}[args.command](args)
+            "convert": _cmd_convert, "label": _cmd_label}[args.command](args)
 
 
 if __name__ == "__main__":
