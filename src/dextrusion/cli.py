@@ -107,6 +107,25 @@ def _add_label(sub):
     p.add_argument("--point-size", type=float, default=25, help="displayed size of the points")
 
 
+def _add_prepare(sub):
+    p = sub.add_parser("prepare", help="write a training copy of a movie and its ROIs rescaled to "
+                                       "the scale the networks expect")
+    p.add_argument("movie", type=Path, help="tif movie shaped (T, Y, X)")
+    p.add_argument("-o", "--out", required=True, type=Path,
+                   help="folder for the rescaled movie and ROI files (not the movie's own folder)")
+    p.add_argument("--cell-diameter", type=float, required=True,
+                   help="typical cell diameter of this movie, in pixels")
+    p.add_argument("--extrusion-duration", type=float, default=4.5,
+                   help="typical event duration of this movie, in frames (default: 4.5, no change)")
+    p.add_argument("--target-diameter", type=float, default=25,
+                   help="cell diameter the networks expect (default: 25 px)")
+    p.add_argument("--target-duration", type=float, default=4.5,
+                   help="event duration the networks expect (default: 4.5 frames)")
+    p.add_argument("--rois-dir", type=Path,
+                   help="folder with <movie>_*.zip ROI files (default: the movie's folder)")
+    p.add_argument("--rois", nargs="+", type=Path, help="explicit ROI files instead of --rois-dir")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dextrusion", description=__doc__)
     p.add_argument("-q", "--quiet", action="store_true")
@@ -116,6 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_evaluate(sub)
     _add_convert(sub)
     _add_label(sub)
+    _add_prepare(sub)
     return p
 
 
@@ -212,12 +232,26 @@ def _cmd_label(a) -> int:
     return 0
 
 
+def _cmd_prepare(a) -> int:
+    from .prepare import prepare
+
+    try:
+        s = prepare(a.movie, a.out, a.cell_diameter, a.extrusion_duration, a.target_diameter,
+                    a.target_duration, a.rois_dir, a.rois)
+    except ValueError as e:
+        raise SystemExit(f"error: {e}") from e
+    print(f"{a.movie.name}: {s['shape_in']} -> {s['shape_out']} "
+          f"(zoom xy {s['ratio_xy']:.3f}, time {s['ratio_t']:.3f}); ROI files: {s['rois']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.WARNING if args.quiet else logging.INFO,
                         format="%(message)s", stream=sys.stderr)
     return {"detect": _cmd_detect, "train": _cmd_train, "evaluate": _cmd_evaluate,
-            "convert": _cmd_convert, "label": _cmd_label}[args.command](args)
+            "convert": _cmd_convert, "label": _cmd_label,
+            "prepare": _cmd_prepare}[args.command](args)
 
 
 if __name__ == "__main__":

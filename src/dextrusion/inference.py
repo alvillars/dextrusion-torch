@@ -88,6 +88,30 @@ def resize_image(img: np.ndarray, ratioxy: float = 1, ratioz: float = 1) -> np.n
     return zoom(img, (ratioz, ratioxy, ratioxy))
 
 
+def scale_factors(model_diameter: float, cell_diameter: float, model_duration: float,
+                  extrusion_duration: float) -> tuple[float, float]:
+    """Spatial and temporal zoom that brings a movie to the scale a network was trained at.
+
+    Same rule as the original: a movie is only rescaled along an axis when its value differs by
+    more than 30 % from the network's; otherwise the ratio is 1.
+    """
+    ratioxy = ratioz = 1.0
+    if abs(cell_diameter - model_diameter) > model_diameter * 0.3:
+        ratioxy = model_diameter / cell_diameter
+    if abs(extrusion_duration - model_duration) > model_duration * 0.3:
+        ratioz = model_duration / extrusion_duration
+    return ratioxy, ratioz
+
+
+def rescale_movie(img: np.ndarray, ratioxy: float, ratioz: float) -> np.ndarray:
+    """Zoom a ``(T, Y, X)`` movie: first spatially, then temporally (as the original did)."""
+    if ratioxy != 1.0:
+        img = resize_image(img, ratioxy=ratioxy, ratioz=1)
+    if ratioz != 1.0:
+        img = resize_image(img, ratioxy=1, ratioz=ratioz)
+    return img
+
+
 def check_image(img: np.ndarray) -> None:
     if img.ndim != 3:
         raise ValueError(
@@ -154,10 +178,9 @@ def detect(
 
     init_shape = tuple(img.shape)
     log.info("Initial image shape: %s", init_shape)
-    if abs(cell_diameter - cfg0.cell_diameter) > cfg0.cell_diameter * 0.3:
-        img = resize_image(img, ratioxy=cfg0.cell_diameter / cell_diameter, ratioz=1)
-    if abs(extrusion_duration - cfg0.extrusion_duration) > cfg0.extrusion_duration * 0.3:
-        img = resize_image(img, ratioxy=1, ratioz=cfg0.extrusion_duration / extrusion_duration)
+    ratioxy, ratioz = scale_factors(cfg0.cell_diameter, cell_diameter, cfg0.extrusion_duration,
+                                    extrusion_duration)
+    img = rescale_movie(img, ratioxy, ratioz)
     scaled_shape = img.shape
     log.info("Rescaled image shape: %s", scaled_shape)
 

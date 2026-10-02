@@ -123,8 +123,20 @@ and the sampler moves the position by up to 2 frames. For delaminations seen fro
 only know the apical appearance.
 
 The tool saves coordinates of the movie you annotate and does not rescale. The networks work with
-cells of about 25 px, so for a movie with much larger cells, train on a downscaled copy of the movie
-and of the ROIs.
+cells of about 25 px, so a movie with much larger (or smaller) cells has to be rescaled before
+training; ``prepare`` writes a training copy of the movie together with correspondingly scaled
+ROI files, using exactly the zoom that ``detect`` applies for the same ``--cell-diameter``
+(diameter of the cells in *your* movie, in pixels). The originals are not modified:
+
+.. code-block:: bash
+
+    uv run dextrusion prepare movie.tif -o train_copy/ --cell-diameter 50 --rois-dir annotations/
+    # -> train_copy/movie.tif (downscaled 2x), train_copy/movie_cell_division.zip, ...
+    #    and train_copy/movie.prepare.json with the ratios and ROI counts
+
+``--extrusion-duration`` does the same along time for movies whose events last more or fewer
+frames than the 4.5 of the networks (rescaling is only applied when the value differs by more than
+30 %, as in ``detect``). Annotate on the original movie, prepare, then train on the prepared folder.
 
 Evaluate
 --------
