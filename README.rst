@@ -145,6 +145,46 @@ ROI files, using exactly the zoom that ``detect`` applies for the same ``--cell-
 frames than the 4.5 of the networks (rescaling is only applied when the value differs by more than
 30 %, as in ``detect``). Annotate on the original movie, prepare, then train on the prepared folder.
 
+Estimate the cell size
+----------------------
+
+``--cell-diameter auto`` (in ``detect`` and ``prepare``) estimates the typical cell diameter of each
+movie from its images, so that the movie is rescaled to the size the networks were trained on.
+``estimate-size`` prints the same estimate without running anything else:
+
+.. code-block:: bash
+
+    uv run dextrusion estimate-size movie.tif
+    # movie.tif: 46.4 px (tiles' quartiles 39-58, 727/792 tiles with a cell pattern, 12 frames;
+    #   last third / first third of the movie: 0.74); detect rescales by 0.54
+    uv run dextrusion detect movie.tif -m models/notum_all -o results/ --cell-diameter auto
+
+The value is the median cell-to-cell spacing over many tiles of 12 evenly spaced frames: the first
+clear maximum of the autocorrelation of each high-passed tile. Tiles outside the image (zero pixels)
+and tiles without a cell pattern do not count; if too few tiles show one, the command stops and asks
+for an explicit ``--cell-diameter``. On crisp images the estimate is accurate to a few percent. On
+blurred, irregular movies there is no sharp cell scale: treat it as the typical size, good to about
++-15 %. One value is used for the whole movie, and the last line of ``estimate-size`` shows how much
+cells change size over time (a warning is logged when the change is larger than 30 %).
+
+Reverse a movie in time
+-----------------------
+
+Played backwards, an extrusion is a cell that appears and expands. ``reverse`` writes a
+time-reversed copy of a movie and moves its ``_cell_death.zip`` ROIs to another class (by default
+``_cell_delamination.zip``), so annotated extrusions can pre-train an "emerging cell" class. The
+hand-picked ``_nothing.zip`` positions are reversed too; division and SOP files are not copied (a
+reversed division is two cells merging). The marked frame ``t`` becomes ``T - 1 - t``. Originals are
+not modified:
+
+.. code-block:: bash
+
+    uv run dextrusion reverse movie.tif -o reversed/ --rois-dir annotations/
+    # -> reversed/movie_rev.tif, reversed/movie_rev_cell_delamination.zip,
+    #    and reversed/movie_rev.reverse.json with the ROI counts and the files left out
+
+Train on the original and the reversed folders together, with the new class in ``--catnames``.
+
 Evaluate
 --------
 

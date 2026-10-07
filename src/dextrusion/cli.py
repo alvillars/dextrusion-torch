@@ -1,8 +1,9 @@
-"""Command line: ``dextrusion {detect,train,evaluate,convert}``."""
+"""Command line: ``dextrusion {detect,train,evaluate,convert,label,prepare,reverse,estimate-size}``."""
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
 import sys
@@ -11,13 +12,47 @@ from pathlib import Path
 from .config import DeXConfig
 
 
+def parse_diameter(text: str):
+    """``--cell-diameter``: a number of pixels, or ``auto`` (estimated from the images of each movie)."""
+    if text.lower() == "auto":
+        return "auto"
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{text}' is not a number of pixels or 'auto'") from None
+    if value <= 0:
+        raise argparse.ArgumentTypeError("the cell diameter must be positive")
+    return value
+
+
+def resolve_cell_diameter(value, movie: Path) -> float:
+    """``value`` itself, or for ``auto`` the median cell spacing estimated on ``movie`` (see ``cellsize``)."""
+    if value != "auto":
+        return value
+    from .cellsize import CellSizeError, estimate_from_file
+
+    try:
+        est = estimate_from_file(movie)
+    except CellSizeError as e:
+        raise SystemExit(f"error: {movie.name}: {e}") from e
+    log = logging.getLogger("dextrusion")
+    log.info("%s: cell diameter (auto) = %.1f px (tiles' quartiles %.0f-%.0f px, %d tiles)",
+             movie.name, est["spacing"], est["q25"], est["q75"], est["n_tiles"])
+    if not 0.7 <= est["trend"] <= 1 / 0.7:
+        log.warning("%s: cell size changes over the movie (last third / first third = %.2f); one "
+                    "diameter is a compromise", movie.name, est["trend"])
+    return est["spacing"]
+
+
 def _add_detect(sub):
     p = sub.add_parser("detect", help="detect events in movie(s)")
     p.add_argument("movies", nargs="+", type=Path, help="tif movies shaped (T, Y, X)")
     p.add_argument("-m", "--models", required=True, type=Path,
                    help="a DeXNet folder, or a folder of DeXNets (used as an ensemble)")
     p.add_argument("-o", "--outdir", type=Path, help="default: <movie folder>/results")
-    p.add_argument("--cell-diameter", type=float, default=25)
+    p.add_argument("--cell-diameter", type=parse_diameter, default=25,
+                   help="typical cell diameter in pixels, or 'auto' to estimate it from each movie "
+                        "(default: 25)")
     p.add_argument("--extrusion-duration", type=float, default=4.5)
     p.add_argument("--dxy", type=int, default=10, help="spatial step of the sliding window")
     p.add_argument("--dz", type=int, default=2, help="temporal step of the sliding window")
@@ -117,14 +152,35 @@ def _add_prepare(sub):
     p.add_argument("movie", type=Path, help="tif movie shaped (T, Y, X)")
     p.add_argument("-o", "--out", required=True, type=Path,
                    help="folder for the rescaled movie and ROI files (not the movie's own folder)")
-    p.add_argument("--cell-diameter", type=float, required=True,
-                   help="typical cell diameter of this movie, in pixels")
+    p.add_argument("--cell-diameter", type=parse_diameter, required=True,
+                   help="typical cell diameter of this movie, in pixels, or 'auto' to estimate it")
     p.add_argument("--extrusion-duration", type=float, default=4.5,
                    help="typical event duration of this movie, in frames (default: 4.5, no change)")
     p.add_argument("--target-diameter", type=float, default=25,
                    help="cell diameter the networks expect (default: 25 px)")
     p.add_argument("--target-duration", type=float, default=4.5,
                    help="event duration the networks expect (default: 4.5 frames)")
+    p.add_argument("--rois-dir", type=Path,
+                   help="folder with <movie>_*.zip ROI files (default: the movie's folder)")
+    p.add_argument("--rois", nargs="+", type=Path, help="explicit ROI files instead of --rois-dir")
+
+
+def _add_estimate_size(sub):
+    p = sub.add_parser("estimate-size", help="estimate the typical cell diameter of movie(s) from their "
+                                             "images (what --cell-diameter auto uses)")
+    p.add_argument("movies", nargs="+", type=Path, help="tif movies shaped (T, Y, X)")
+    p.add_argument("--frames", type=int, default=12, help="evenly spaced frames to analyse")
+    p.add_argument("--tile", type=int, default=192, help="tile size in pixels")
+
+
+def _add_reverse(sub):
+    p = sub.add_parser("reverse", help="write a time-reversed training copy of a movie; its death "
+                                       "ROIs become another class (e.g. delamination)")
+    p.add_argument("movie", type=Path, help="tif movie shaped (T, Y, X)")
+    p.add_argument("-o", "--out", required=True, type=Path,
+                   help="folder for the reversed movie and ROI files (not the movie's own folder)")
+    p.add_argument("--death-as", default="_cell_delamination.zip", metavar="SUFFIX",
+                   help="ROI file suffix of the reversed death ROIs (default: _cell_delamination.zip)")
     p.add_argument("--rois-dir", type=Path,
                    help="folder with <movie>_*.zip ROI files (default: the movie's folder)")
     p.add_argument("--rois", nargs="+", type=Path, help="explicit ROI files instead of --rois-dir")
@@ -140,6 +196,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_convert(sub)
     _add_label(sub)
     _add_prepare(sub)
+    _add_reverse(sub)
+    _add_estimate_size(sub)
     return p
 
 
@@ -147,7 +205,7 @@ def _cmd_detect(a) -> int:
     from .run import DetectOptions, detect_movie
 
     opts = DetectOptions(
-        cell_diameter=a.cell_diameter, extrusion_duration=a.extrusion_duration, dxy=a.dxy,
+        cell_diameter=25 if a.cell_diameter == "auto" else a.cell_diameter, extrusion_duration=a.extrusion_duration, dxy=a.dxy,
         dz=a.dz, group_size=a.group_size, batch_size=a.batch_size, cat=a.cat,
         volume_threshold=a.volume_threshold, proba_threshold=a.proba_threshold, disxy=a.disxy,
         distime=a.distime, save_proba=a.save_proba, save_cleaned=a.save_cleaned,
@@ -155,7 +213,8 @@ def _cmd_detect(a) -> int:
         legacy_ensemble_shift=not a.consistent_ensemble_shift)
     for movie in a.movies:
         logging.getLogger("dextrusion").info("Detecting events on %s", movie)
-        detect_movie(movie, a.models, a.outdir, opts)
+        movie_opts = dataclasses.replace(opts, cell_diameter=resolve_cell_diameter(a.cell_diameter, movie))
+        detect_movie(movie, a.models, a.outdir, movie_opts)
     return 0
 
 
@@ -254,7 +313,7 @@ def _cmd_prepare(a) -> int:
     from .prepare import prepare
 
     try:
-        s = prepare(a.movie, a.out, a.cell_diameter, a.extrusion_duration, a.target_diameter,
+        s = prepare(a.movie, a.out, resolve_cell_diameter(a.cell_diameter, a.movie), a.extrusion_duration, a.target_diameter,
                     a.target_duration, a.rois_dir, a.rois)
     except ValueError as e:
         raise SystemExit(f"error: {e}") from e
@@ -263,13 +322,46 @@ def _cmd_prepare(a) -> int:
     return 0
 
 
+def _cmd_reverse(a) -> int:
+    from .reverse import reverse
+
+    try:
+        s = reverse(a.movie, a.out, a.rois_dir, a.rois, a.death_as)
+    except ValueError as e:
+        raise SystemExit(f"error: {e}") from e
+    print(f"{a.movie.name}: {s['shape'][0]} frames reversed; ROI files: {s['rois']}; "
+          f"not copied: {s['dropped']}")
+    return 0
+
+
+def _cmd_estimate_size(a) -> int:
+    from .cellsize import CellSizeError, estimate_from_file
+    from .inference import scale_factors
+
+    status = 0
+    for movie in a.movies:
+        try:
+            est = estimate_from_file(movie, a.frames, a.tile)
+        except CellSizeError as e:
+            print(f"{movie.name}: {e}")
+            status = 1
+            continue
+        ratio, _ = scale_factors(25, est["spacing"], 4.5, 4.5)
+        rescale = f"detect rescales by {ratio:.2f}" if ratio != 1.0 else "detect does not rescale (within 30 % of 25 px)"
+        print(f"{movie.name}: {est['spacing']:.1f} px (tiles' quartiles {est['q25']:.0f}-{est['q75']:.0f}, "
+              f"{est['n_tiles']}/{est['n_valid']} tiles with a cell pattern, {est['n_frames']} frames; "
+              f"last third / first third of the movie: {est['trend']:.2f}); {rescale}")
+    return status
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.WARNING if args.quiet else logging.INFO,
                         format="%(message)s", stream=sys.stderr)
     return {"detect": _cmd_detect, "train": _cmd_train, "evaluate": _cmd_evaluate,
             "convert": _cmd_convert, "label": _cmd_label,
-            "prepare": _cmd_prepare}[args.command](args)
+            "prepare": _cmd_prepare, "reverse": _cmd_reverse,
+            "estimate-size": _cmd_estimate_size}[args.command](args)
 
 
 if __name__ == "__main__":
