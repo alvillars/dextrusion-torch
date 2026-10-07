@@ -9,3 +9,6 @@ build/
 results/
 tmp_data_from_roi_*/
 /data/
+/annotations/
+/runs/
+/models/notum_delamination/
